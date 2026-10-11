@@ -2,17 +2,35 @@ import base64
 import json
 import asyncio
 import aiohttp
+import os
+import threading
 from datetime import datetime, date, time
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
 
+# ============ FLASK SERVER FOR RENDER (KEEPS BOT AWAKE) ============
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "Bot is active and running!"
+
+def run_flask():
+    port = int(os.environ.get('PORT', 10000))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = threading.Thread(target=run_flask)
+    t.start()
+
 # ============ CONFIGURATION ============
-API_URL = "https://your-api-url.com/"  # Yahan apni actual Free Fire like API ka link daal dena
+API_URL = os.environ.get("API_URL", "https://your-api-url.com/")
 ENCODED_KEY = "WkVYWFk="
 API_KEY = base64.b64decode(ENCODED_KEY).decode()
-BOT_TOKEN = "8988399911:AAEAOVXEMmo_xhKqC_NP_RkH7vP8QWtczY8"
-ADMIN_IDS = [8438207365]          # Aapki Telegram User ID
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8988399911:AAEAOVXEMmo_xhKqC_NP_RkH7vP8QWtczY8")
+ADMIN_IDS = [int(i.strip()) for i in os.environ.get("ADMIN_IDS", "8438207365").split(",") if i.strip()]
 
 # ============ DATA FILES ============
 DATA_FILES = {
@@ -113,23 +131,22 @@ async def reset_midnight(context: ContextTypes.DEFAULT_TYPE):
     save_all()
     print(f"[{datetime.now()}] ✅ Daily limits reset")
 
-async def block_non_admin_private(update: Update) -> bool:
-    chat_type = update.effective_chat.type
-    user_id = update.effective_user.id
-    if chat_type == "private" and not is_admin(user_id):
-        await update.message.reply_text("🚫 *Bot works only in groups!*\n(Admins can use in private)", parse_mode='Markdown')
-        return True
-    return False
-
 async def reply(update, text):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 # ============ USER COMMANDS ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await block_non_admin_private(update): return
+    chat_type = update.effective_chat.type
+    user_id = update.effective_user.id
+    
+    if chat_type == "private":
+        await reply(update, "👋 Welcome! Thanks for using bot\nPowered by @NOORXMODS")
+        return
+
     if bot_status == "off":
         await reply(update, "🔴 *Bot is currently OFF*")
         return
+    
     msg = (
         "✨ *𝑭𝑹𝑬𝑬 𝑭𝑰𝑹𝑬 𝑳𝑰𝑲𝑬 𝑩𝑶𝑻* ✨\n"
         "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
@@ -138,34 +155,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 `/info` – Your remaining likes\n\n"
         "📌 *Example:* `/like IND 14160011100`\n"
         f"🔥 Your daily limit: `{daily_limit}` likes\n"
-        "🌍 *Any region code works* (e.g., IND, USA, GER, etc.)\n"
         "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯"
     )
     await reply(update, msg)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await block_non_admin_private(update): return
     if bot_status == "off":
         await reply(update, "🔴 Bot is OFF")
         return
+        
+    user_id = update.effective_user.id
+    
     msg = (
         "📖 *𝑪𝑶𝑴𝑴𝑨𝑵𝑫 𝑳𝑰𝑺𝑻*\n\n"
         "🔹 `/like REGION UID` – Send 1 like (any region)\n"
         "🔹 `/info` – Check your remaining likes\n"
         "🔹 `/start` – Welcome message\n\n"
         "*Example:* `/like IND 1234567890`\n"
-        "*Supports any region* – just type the code.\n\n"
-        "👑 *Admin commands:*\n"
-        "`/allow` – Allow current group\n"
-        "`/off` / `/on` – Turn bot off/on\n"
-        "`/stats` – Today's usage\n"
-        "`/setprivate` / `/setpublic` – Change group mode\n"
-        "`/setlimit <num>` – Set daily limit per user"
+        "*Supports any region* – just type the code."
     )
+    
+    # Admin commands sirf admin ko hi dikhengi
+    if is_admin(user_id):
+        msg += (
+            "\n\n👑 *Admin commands:*\n"
+            "`/allow` – Allow current group\n"
+            "`/off` / `/on` – Turn bot off/on\n"
+            "`/stats` – Today's usage\n"
+            "`/setprivate` / `/setpublic` – Change group mode\n"
+            "`/setlimit <num>` – Set daily limit per user"
+        )
+        
     await reply(update, msg)
 
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await block_non_admin_private(update): return
     if bot_status == "off":
         await reply(update, "🔴 Bot is OFF")
         return
@@ -188,7 +211,6 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await reply(update, msg)
 
 async def like_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await block_non_admin_private(update): return
     if bot_status == "off":
         await reply(update, "🔴 *Bot is currently OFF*")
         return
@@ -274,7 +296,6 @@ async def like_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ ADMIN COMMANDS ============
 async def allow_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ *Admin only command*")
         return
     chat = update.effective_chat
     if chat.type == "private":
@@ -283,20 +304,18 @@ async def allow_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gid = str(chat.id)
     allowed_groups[gid] = {'name': chat.title, 'by': update.effective_user.id, 'date': today_str()}
     save_all()
-    await reply(update, f"✅ *Group allowed*\n{chat.title}\nBot will now work here (if private mode)")
+    await reply(update, f"✅ *Group allowed*\n{chat.title}\nBot will now work here")
 
 async def off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     global bot_status
     bot_status = "off"
     save_all()
-    await reply(update, "🔴 *Bot is now OFF* (no commands work)")
+    await reply(update, "🔴 *Bot is now OFF*")
 
 async def on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     global bot_status
     bot_status = "on"
@@ -305,7 +324,6 @@ async def on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     t = today_str()
     if t not in daily_stats:
@@ -325,37 +343,35 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_private(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     global bot_mode
     bot_mode = "private"
     save_all()
-    await reply(update, "🔒 *Bot is now PRIVATE* – works only in allowed groups")
+    await reply(update, "🔒 *Bot is now PRIVATE*")
 
 async def set_public(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     global bot_mode
     bot_mode = "public"
     save_all()
-    await reply(update, "🌍 *Bot is now PUBLIC* – works in all groups")
+    await reply(update, "🌍 *Bot is now PUBLIC*")
 
 async def set_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
-        await reply(update, "❌ Admin only")
         return
     if len(context.args) != 1 or not context.args[0].isdigit():
-        await reply(update, "❌ Usage: `/setlimit <number>`\nExample: `/setlimit 5`")
+        await reply(update, "❌ Usage: `/setlimit <number>`")
         return
     global daily_limit
     daily_limit = int(context.args[0])
     save_all()
-    await reply(update, f"✅ *Daily limit set to `{daily_limit}` likes per user*")
+    await reply(update, f"✅ *Daily limit set to `{daily_limit}`*")
 
 # ============ MAIN ============
 def main():
     load_data()
+    keep_alive()  # Start Flask server for Render web service
         
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = Application.builder().token(BOT_TOKEN).request(request).build()
